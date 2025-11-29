@@ -1,0 +1,2 @@
+git clone https://github.com/jiaheguo521/Deep-Live-Cam
+then configure the virtual environment in Deep-Live-Cam
