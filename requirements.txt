@@ -1,0 +1,59 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# === Shared/Merged Dependencies ===
+
+# Audio: numpy==1.26.4
+# Video: numpy>=1.23.5,<2
+# Decision: 1.26.4 satisfies both
+numpy==1.26.4
+
+# Audio: torch==2.4.0
+# Video: torch; sys_platform != 'darwin'
+# Video: torch==2.8.0+cu128; sys_platform == 'darwin'
+# Decision: Use strict version from Audio as base.
+torch==2.4.0
+
+# Audio: torchvision==0.19.0
+# Video: torchvision; sys_platform != 'darwin'
+# Video: torchvision==0.20.1; sys_platform == 'darwin'
+# Decision: Use strict version from Audio as base.
+torchvision==0.19.0
+stringzilla==3.10.0
+
+# === Audio Dependencies (seed-vc-realtime) ===
+torchaudio==2.4.0
+scipy==1.13.1
+librosa==0.10.2
+huggingface-hub>=0.28.1
+munch==4.0.0
+einops==0.8.0
+pydub==0.25.1
+transformers==4.46.3
+FreeSimpleGUI==5.1.1
+soundfile==0.12.1
+sounddevice==0.5.0
+modelscope==1.18.1
+funasr>=1.2.7
+pyyaml
+python-dotenv
+
+# === Video Dependencies (Deep-Live-Cam) ===
+typing-extensions>=4.8.0
+opencv-python==4.10.0.84
+cv2_enumerate_cameras==1.1.15
+onnx==1.18.0
+insightface==0.7.3
+psutil==5.9.8
+tk==0.1.0
+customtkinter==5.2.2
+pillow==11.1.0
+
+# Platform specific from Video
+onnxruntime-silicon==1.16.3; sys_platform == 'darwin' and platform_machine == 'arm64'
+onnxruntime-gpu==1.22.0; sys_platform != 'darwin'
+tensorflow; sys_platform != 'darwin'
+opennsfw2==0.10.2
+protobuf==4.25.1
+git+https://github.com/xinntao/BasicSR.git@master
+git+https://github.com/TencentARC/GFPGAN.git@master
+pygrabber

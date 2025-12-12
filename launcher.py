@@ -1,3 +1,17 @@
+"""
+Legacy Launcher (launcher.py)
+-----------------------------
+This script launches the audio (Seed-VC) and video (Deep-Live-Cam) projects as separate subprocesses.
+It is designed to work with *separate* virtual environments for each project if needed, though it can run in a unified one.
+
+Usage:
+1. It creates a Shared Memory block for synchronization.
+2. It spawns `audio/seed-vc-realtime/real-time-gui.py` in a subprocess.
+3. It spawns `video/Deep-Live-Cam/run.py` in a separate subprocess.
+4. It monitors their status and cleans up shared memory on exit.
+
+Note: This launcher opens TWO separate GUI windows (one for audio, one for video).
+"""
 import multiprocessing.shared_memory
 import subprocess
 import time
