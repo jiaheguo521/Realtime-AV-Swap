@@ -23,8 +23,9 @@ sys.path.append(AUDIO_DIR)
 sys.path.append(VIDEO_DIR)
 
 # --- Imports ---
-# Audio
-from unified_audio import AudioEngine
+# Audio - 使用 realtime_vc_engine
+from realtime_vc_engine import RealtimeVCEngine
+
 # Video
 import video_modules.globals
 import video_modules.metadata
@@ -49,14 +50,34 @@ class UnifiedLauncher(ctk.CTk):
         self.shm = None
         self.init_shared_memory()
         
-        # --- Audio Engine Init ---
+        # --- Audio Engine Init (使用 RealtimeVCEngine) ---
         class AudioArgs:
             checkpoint_path = None
             config_path = None
             fp16 = True
             gpu = 0
         
-        self.audio_engine = AudioEngine(AudioArgs(), shm_name=self.shm_name)
+        # 设置共享内存环境变量，让 RealtimeVCEngine 连接
+        os.environ["RAS_SHARED_MEM_NAME"] = self.shm_name
+        
+        # --- 关键修改：切换目录初始化引擎 ---
+        # 许多音频模块依赖相对路径（如 ./checkpoints），所以我们需要临时切换工作目录
+        original_cwd = os.getcwd()
+        try:
+            print(f"Changing CWD to {AUDIO_DIR} for audio engine initialization...")
+            os.chdir(AUDIO_DIR)
+            self.audio_engine = RealtimeVCEngine(AudioArgs())
+        except Exception as e:
+            print(f"Error initializing audio engine: {e}")
+            raise e
+        finally:
+            os.chdir(original_cwd)
+            print(f"Restored CWD to {original_cwd}")
+        
+        # 设置性能回调
+        self.audio_delay_time = 0
+        self.audio_infer_time = 0
+        self.audio_engine.on_perf_update = self.on_audio_perf_update
         
         # --- Video State ---
         self.video_running = False
@@ -71,6 +92,10 @@ class UnifiedLauncher(ctk.CTk):
         video_modules.globals.execution_providers = ['CUDAExecutionProvider']
         video_modules.globals.frame_processors = ['face_swapper']
         video_modules.globals.headless = True
+
+        # --- Load Audio Config ---
+        self.audio_config = {}
+        self.load_audio_config()
         
         # --- GUI Layout ---
         self.tabview = ctk.CTkTabview(self)
@@ -82,8 +107,72 @@ class UnifiedLauncher(ctk.CTk):
         self.setup_live_tab()
         self.setup_file_tab()
         
+        # Apply loaded config to audio engine devices
+        if self.audio_config.get("sg_hostapi"):
+             self.hostapi_var.set(self.audio_config["sg_hostapi"])
+             self.update_device_lists(self.audio_config["sg_hostapi"])
+             
+             if self.audio_config.get("sg_input_device"):
+                 self.audio_in_var.set(self.audio_config["sg_input_device"])
+             if self.audio_config.get("sg_output_device"):
+                 self.audio_out_var.set(self.audio_config["sg_output_device"])
+
         # Periodic UI Updates
         self.after(100, self.update_status_loop)
+
+    def load_audio_config(self):
+        """加载音频配置"""
+        config_path = os.path.join(AUDIO_DIR, "configs", "inuse", "config.json")
+        default_config_path = os.path.join(AUDIO_DIR, "configs", "config.json")
+        
+        try:
+            target_path = config_path if os.path.exists(config_path) else default_config_path
+            if os.path.exists(target_path):
+                with open(target_path, "r", encoding="utf-8") as f:
+                    self.audio_config = json.load(f)
+                    print(f"Loaded audio config from {target_path}")
+            else:
+                print("No audio config found, using defaults.")
+        except Exception as e:
+            print(f"Error loading audio config: {e}")
+
+    def save_audio_config(self):
+        """保存音频配置"""
+        config_dir = os.path.join(AUDIO_DIR, "configs", "inuse")
+        config_path = os.path.join(config_dir, "config.json")
+        
+        try:
+            os.makedirs(config_dir, exist_ok=True)
+            
+            # 构建配置字典
+            settings = {
+                "reference_audio_path": self.audio_engine.config.reference_audio_path,
+                "sg_hostapi": self.hostapi_var.get(),
+                "sg_wasapi_exclusive": self.var_wasapi_exclusive.get(),
+                "sg_input_device": self.audio_in_var.get(),
+                "sg_output_device": self.audio_out_var.get(),
+                "sr_type": self.var_sr_type.get(),
+                # 引擎配置参数
+                "diffusion_steps": self.audio_engine.config.diffusion_steps,
+                "inference_cfg_rate": self.audio_engine.config.inference_cfg_rate,
+                "max_prompt_length": self.audio_engine.config.max_prompt_length,
+                "block_time": self.audio_engine.config.block_time,
+                "crossfade_length": self.audio_engine.config.crossfade_time,
+                "extra_time_ce": self.audio_engine.config.extra_time_ce,
+                "extra_time": self.audio_engine.config.extra_time,
+                "extra_time_right": self.audio_engine.config.extra_time_right,
+            }
+            
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(settings, f, indent=4)
+            print(f"Saved audio config to {config_path}")
+        except Exception as e:
+            print(f"Error saving audio config: {e}")
+
+    def on_audio_perf_update(self, infer_time, delay_time):
+        """音频性能回调"""
+        self.audio_infer_time = infer_time * 1000  # 转换为毫秒
+        self.audio_delay_time = delay_time * 1000  # 转换为毫秒
 
     def init_shared_memory(self):
         SHM_SIZE = 24
@@ -124,7 +213,14 @@ class UnifiedLauncher(ctk.CTk):
         
         # 1. Reference Audio
         ctk.CTkLabel(settings_scroll, text="Reference Audio File:").pack(anchor="w", padx=5)
-        self.lbl_audio_ref = ctk.CTkLabel(settings_scroll, text="None", text_color="gray")
+        ref_text = "None"
+        if self.audio_config.get("reference_audio_path"):
+            path = self.audio_config["reference_audio_path"]
+            if os.path.exists(path):
+                 ref_text = os.path.basename(path)
+                 self.audio_engine.set_config(reference_audio_path=path)
+        
+        self.lbl_audio_ref = ctk.CTkLabel(settings_scroll, text=ref_text, text_color="green" if ref_text != "None" else "gray")
         self.lbl_audio_ref.pack(anchor="w", padx=5)
         ctk.CTkButton(settings_scroll, text="Select Reference", command=self.select_audio_ref).pack(pady=5)
         
@@ -132,26 +228,60 @@ class UnifiedLauncher(ctk.CTk):
         self.audio_dev_frame = ctk.CTkFrame(settings_scroll)
         self.audio_dev_frame.pack(fill="x", pady=5)
         
-        ctk.CTkLabel(self.audio_dev_frame, text="Input Device:").grid(row=0, column=0, padx=5)
+        ctk.CTkLabel(self.audio_dev_frame, text="Host API:").grid(row=0, column=0, padx=5)
+        self.hostapi_var = ctk.StringVar()
+        self.combo_hostapi = ctk.CTkOptionMenu(self.audio_dev_frame, variable=self.hostapi_var, command=self.update_device_lists)
+        self.combo_hostapi.grid(row=0, column=1, padx=5, sticky="ew")
+
+        ctk.CTkLabel(self.audio_dev_frame, text="Input Device:").grid(row=1, column=0, padx=5)
         self.audio_in_var = ctk.StringVar()
         self.combo_audio_in = ctk.CTkOptionMenu(self.audio_dev_frame, variable=self.audio_in_var)
-        self.combo_audio_in.grid(row=0, column=1, padx=5, sticky="ew")
+        self.combo_audio_in.grid(row=1, column=1, padx=5, sticky="ew")
         
-        ctk.CTkLabel(self.audio_dev_frame, text="Output Device:").grid(row=1, column=0, padx=5)
+        ctk.CTkLabel(self.audio_dev_frame, text="Output Device:").grid(row=2, column=0, padx=5)
         self.audio_out_var = ctk.StringVar()
         self.combo_audio_out = ctk.CTkOptionMenu(self.audio_dev_frame, variable=self.audio_out_var)
-        self.combo_audio_out.grid(row=1, column=1, padx=5, sticky="ew")
+        self.combo_audio_out.grid(row=2, column=1, padx=5, sticky="ew")
         
         self.refresh_audio_devices()
-        ctk.CTkButton(self.audio_dev_frame, text="Refresh Devices", command=self.refresh_audio_devices).grid(row=2, column=0, columnspan=2, pady=5)
+        ctk.CTkButton(self.audio_dev_frame, text="Refresh Devices", command=self.refresh_audio_devices).grid(row=3, column=0, columnspan=2, pady=5)
         
-        # 3. Parameters
-        self.create_slider(settings_scroll, "Block Time (s)", "block_time", 0.04, 3.0, 0.5, 0.01)
-        self.create_slider(settings_scroll, "Crossfade (s)", "crossfade_time", 0.02, 0.5, 0.05, 0.01)
-        self.create_slider(settings_scroll, "Extra Time CE (s)", "extra_time_ce", 0.5, 10.0, 2.5, 0.1)
-        self.create_slider(settings_scroll, "Extra Time (s)", "extra_time", 0.5, 10.0, 0.5, 0.1)
-        self.create_slider(settings_scroll, "Diffusion Steps", "diffusion_steps", 1, 30, 10, 1)
-        self.create_slider(settings_scroll, "Inference CFG Rate", "inference_cfg_rate", 0.0, 1.0, 0.7, 0.1)
+        # WASAPI Exclusive option
+        self.var_wasapi_exclusive = ctk.BooleanVar(value=self.audio_config.get("sg_wasapi_exclusive", False))
+        ctk.CTkCheckBox(self.audio_dev_frame, text="WASAPI Exclusive", variable=self.var_wasapi_exclusive).grid(row=4, column=0, columnspan=2, pady=5)
+        
+        # Sampling Rate Type
+        sr_frame = ctk.CTkFrame(settings_scroll)
+        sr_frame.pack(fill="x", pady=5)
+        ctk.CTkLabel(sr_frame, text="Sampling Rate:").pack(side="left", padx=5)
+        
+        # 根据 config 设置 sr_type 默认值
+        default_sr_type = "sr_model"
+        config_sr_type = self.audio_config.get("sr_type")
+        if isinstance(config_sr_type, str):
+            default_sr_type = config_sr_type
+        elif isinstance(config_sr_type, bool): # 旧版 config 可能用 bool? 原版代码逻辑有点绕，主要是看 sr_model 和 sr_device 哪个为 true
+             if self.audio_config.get("sr_device"): default_sr_type = "sr_device"
+        
+        self.var_sr_type = ctk.StringVar(value=default_sr_type)
+        ctk.CTkRadioButton(sr_frame, text="Model SR", variable=self.var_sr_type, value="sr_model").pack(side="left", padx=5)
+        ctk.CTkRadioButton(sr_frame, text="Device SR", variable=self.var_sr_type, value="sr_device").pack(side="left", padx=5)
+        self.lbl_sr_value = ctk.CTkLabel(sr_frame, text="--", text_color="gray")
+        self.lbl_sr_value.pack(side="right", padx=5)
+        
+        # 3. Parameters - Regular Settings
+        ctk.CTkLabel(settings_scroll, text="── Regular Settings ──", font=("Roboto", 12, "bold")).pack(pady=(10, 5))
+        self.create_slider(settings_scroll, "Diffusion Steps", "diffusion_steps", 1, 30, self.audio_config.get("diffusion_steps", 10), 1)
+        self.create_slider(settings_scroll, "Inference CFG Rate", "inference_cfg_rate", 0.0, 1.0, self.audio_config.get("inference_cfg_rate", 0.7), 0.1)
+        self.create_slider(settings_scroll, "Max Prompt Length (s)", "max_prompt_length", 1.0, 20.0, self.audio_config.get("max_prompt_length", 3.0), 0.5)
+        
+        # 4. Performance Settings
+        ctk.CTkLabel(settings_scroll, text="── Performance Settings ──", font=("Roboto", 12, "bold")).pack(pady=(10, 5))
+        self.create_slider(settings_scroll, "Block Time (s)", "block_time", 0.04, 3.0, self.audio_config.get("block_time", 0.25), 0.02)
+        self.create_slider(settings_scroll, "Crossfade Length (s)", "crossfade_time", 0.02, 0.5, self.audio_config.get("crossfade_length", 0.05), 0.02)
+        self.create_slider(settings_scroll, "Extra CE Context (left)", "extra_time_ce", 0.5, 10.0, self.audio_config.get("extra_time_ce", 2.5), 0.1)
+        self.create_slider(settings_scroll, "Extra DiT Context (left)", "extra_time", 0.5, 10.0, self.audio_config.get("extra_time", 0.5), 0.1)
+        self.create_slider(settings_scroll, "Extra Context (right)", "extra_time_right", 0.02, 10.0, self.audio_config.get("extra_time_right", 2.0), 0.02)
         
         # Controls
         self.btn_audio_start = ctk.CTkButton(parent, text="Start Audio Conversion", command=self.toggle_audio, height=40, font=("Roboto", 14, "bold"))
@@ -168,8 +298,9 @@ class UnifiedLauncher(ctk.CTk):
         self.lbl_audio_stats.pack(pady=5)
 
     def update_audio_mode(self):
+        """切换 VC (Voice Conversion) 或 IM (Input Monitoring) 模式"""
         mode = "vc" if self.var_audio_vc.get() else "im"
-        self.audio_engine.config["function"] = mode
+        self.audio_engine.set_config(function=mode)
 
     def create_slider(self, parent, label, key, min_val, max_val, default, step):
         frame = ctk.CTkFrame(parent)
@@ -181,49 +312,110 @@ class UnifiedLauncher(ctk.CTk):
         def update_val(val):
             val = round(float(val), 2)
             lbl_val.configure(text=str(val))
-            self.audio_engine.update_config({key: val})
+            # 使用 set_config 更新 RealtimeVCEngine 的配置
+            self.audio_engine.set_config(**{key: val})
 
         slider = ctk.CTkSlider(frame, from_=min_val, to=max_val, number_of_steps=int((max_val-min_val)/step), command=update_val)
         slider.set(default)
         slider.pack(side="right", fill="x", expand=True, padx=5)
-        # Init config
-        self.audio_engine.config[key] = default
+        # 初始化配置
+        self.audio_engine.set_config(**{key: default})
 
     def refresh_audio_devices(self):
+        """刷新音频设备列表"""
         try:
-            devs = sd.query_devices()
-            ins = [d['name'] for d in devs if d['max_input_channels'] > 0]
-            outs = [d['name'] for d in devs if d['max_output_channels'] > 0]
+            # 更新引擎的设备列表
+            self.audio_engine.update_devices()
+        except Exception as e:
+            print(f"Error refreshing devices in engine: {e}")
+        
+        try:
+            hostapis = sd.query_hostapis()
+            self.hostapis = [h["name"] for h in hostapis]
+            self.combo_hostapi.configure(values=self.hostapis)
+            
+            if self.hostapis:
+                current = self.hostapi_var.get()
+                if not current or current not in self.hostapis:
+                    self.hostapi_var.set(self.hostapis[0])
+                self.update_device_lists(self.hostapi_var.get())
+        except Exception as e:
+            print(f"Error refreshing devices: {e}")
+
+    def update_device_lists(self, hostapi_name):
+        """根据选择的 Host API 更新输入/输出设备列表"""
+        try:
+            # 直接使用引擎提供的列表，确保名称一致性
+            self.audio_engine.update_devices(hostapi_name)
+            
+            ins = self.audio_engine.input_devices
+            outs = self.audio_engine.output_devices
+            
+            self.combo_audio_in.configure(values=ins)
             if ins:
-                self.combo_audio_in.configure(values=ins)
-                self.audio_in_var.set(ins[0])
+                current = self.audio_in_var.get()
+                if not current or current not in ins:
+                    self.audio_in_var.set(ins[0])
+            else:
+                self.audio_in_var.set("")
+                
+            self.combo_audio_out.configure(values=outs)
             if outs:
-                self.combo_audio_out.configure(values=outs)
-                self.audio_out_var.set(outs[0])
-        except: pass
+                current = self.audio_out_var.get()
+                if not current or current not in outs:
+                    self.audio_out_var.set(outs[0])
+            else:
+                self.audio_out_var.set("")
+                
+        except Exception as e:
+            print(f"Error updating device lists: {e}")
 
     def select_audio_ref(self):
+        """选择参考音频文件"""
         path = ctk.filedialog.askopenfilename(filetypes=[("Audio", "*.wav *.mp3 *.flac")])
         if path:
-            if self.audio_engine.load_reference(path):
+            if os.path.exists(path):
+                self.audio_engine.set_config(reference_audio_path=path)
                 self.lbl_audio_ref.configure(text=os.path.basename(path), text_color="green")
             else:
                 self.lbl_audio_ref.configure(text="Error loading file", text_color="red")
 
     def toggle_audio(self):
-        if not self.audio_engine.running:
-            # Update devices
-            self.audio_engine.config["input_device"] = self.audio_in_var.get()
-            self.audio_engine.config["output_device"] = self.audio_out_var.get()
+        """启动/停止音频转换"""
+        if not self.audio_engine.flag_vc:
+            # 检查是否已设置参考音频
+            if not self.audio_engine.config.reference_audio_path:
+                messagebox.showwarning("Warning", "Please select a reference audio first.")
+                return
+            
+            # 直接使用下拉框的值（即设备名），不再解析
+            in_val = self.audio_in_var.get()
+            out_val = self.audio_out_var.get()
+            hostapi = self.hostapi_var.get()
+
+            # 更新配置（包含所有设置）
+            self.audio_engine.set_config(
+                sg_hostapi=hostapi,
+                sg_input_device=in_val,
+                sg_output_device=out_val,
+                wasapi_exclusive=self.var_wasapi_exclusive.get(),
+                sr_type=self.var_sr_type.get()
+            )
+            
+            # 启动前保存配置
+            self.save_audio_config()
             
             self.audio_engine.start_stream()
-            if self.audio_engine.running:
+            if self.audio_engine.flag_vc:
                 self.btn_audio_start.configure(text="Stop Audio", fg_color="red")
                 self.lbl_audio_status.configure(text="Status: Running", text_color="green")
+                # 显示采样率
+                self.lbl_sr_value.configure(text=f"{self.audio_engine.config.samplerate} Hz")
         else:
             self.audio_engine.stop_stream()
             self.btn_audio_start.configure(text="Start Audio Conversion", fg_color=["#3B8ED0", "#1F6AA5"])
             self.lbl_audio_status.configure(text="Status: Stopped", text_color="red")
+            self.lbl_sr_value.configure(text="--")
 
     # --- Video Live UI ---
     def setup_video_live_ui(self, parent):
@@ -498,9 +690,9 @@ class UnifiedLauncher(ctk.CTk):
 
     def update_status_loop(self):
         # Update Audio Status
-        if self.audio_engine.running:
-            delay = int(self.audio_engine.delay_time * 1000)
-            infer = int(self.audio_engine.last_inference_time)
+        if self.audio_engine.flag_vc:
+            delay = int(self.audio_delay_time)
+            infer = int(self.audio_infer_time)
             self.lbl_audio_stats.configure(text=f"Delay: {delay}ms | Infer: {infer}ms")
         else:
              self.lbl_audio_stats.configure(text="Delay: 0ms | Infer: 0ms")
@@ -508,11 +700,20 @@ class UnifiedLauncher(ctk.CTk):
         self.after(500, self.update_status_loop)
 
     def on_close(self):
+        # 退出前尝试保存配置
+        try:
+            self.save_audio_config()
+        except:
+            pass
+            
         self.audio_engine.stop_stream()
         self.video_running = False
         if self.shm:
             self.shm.close()
-            self.shm.unlink()
+            try:
+                self.shm.unlink()
+            except:
+                pass
         self.destroy()
 
 if __name__ == "__main__":
