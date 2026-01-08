@@ -29,7 +29,24 @@ A custom **Shared Memory** mechanism is used to synchronize audio and video late
     cd Realtime-AV-Swap
     ```
 
-2.  **Create and Activate Virtual Environment**:
+2.  **Download Sub-projects**:
+    You must download the Audio and Video projects into their respective directories.
+
+    *   **Audio**: Clone [Seed-VC Realtime](https://github.com/jiaheguo521/seed-vc-realtime) into `audio/seed-vc-realtime`.
+    *   **Video**: Clone [Deep-Live-Cam](https://github.com/jiaheguo521/Deep-Live-Cam) into `video/Deep-Live-Cam`.
+
+    ```bash
+    # Audio
+    cd audio
+    git clone https://github.com/jiaheguo521/seed-vc-realtime.git
+    
+    # Video
+    cd ../video
+    git clone https://github.com/jiaheguo521/Deep-Live-Cam.git
+    cd ..
+    ```
+
+3.  **Create and Activate Virtual Environment**:
     It is recommended to create a virtual environment to isolate dependencies.
     ```bash
     # Create the virtual environment
@@ -51,20 +68,20 @@ If you want to use `unified_launcher.py`, follow these steps:
 
 ### Option 2: Dual-Process Launcher (Legacy)
 
-2.  **Setup Audio Subsystem**:
-    *   Navigate to the `audio` directory.
-    *   Clone the `seed-vc-realtime` repository.
-    *   Create a virtual environment named `venv` inside `audio/seed-vc-realtime`.
+If you prefer to run the subsystems in separate environments (legacy mode), follow these additional steps after the Common Setup:
+
+1.  **Setup Audio Subsystem Environment**:
+    *   Navigate to `audio/seed-vc-realtime`.
+    *   Create a virtual environment named `venv` inside it.
     *   Install dependencies as per the submodule's instructions.
     ```bash
     # Example structure expectation:
     # audio/seed-vc-realtime/venv/Scripts/python.exe
     ```
 
-3.  **Setup Video Subsystem**:
-    *   Navigate to the `video` directory.
-    *   Clone the `Deep-Live-Cam` repository.
-    *   Create a virtual environment named `venv` inside `video/Deep-Live-Cam`.
+2.  **Setup Video Subsystem Environment**:
+    *   Navigate to `video/Deep-Live-Cam`.
+    *   Create a virtual environment named `venv` inside it.
     *   Install dependencies (ensure CUDA providers are installed).
     ```bash
     # Example structure expectation:
