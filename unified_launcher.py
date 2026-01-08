@@ -457,6 +457,9 @@ class UnifiedLauncher(ctk.CTk):
 
         self.var_many_faces = ctk.BooleanVar(value=False)
         ctk.CTkSwitch(toggles_frame, text="Many Faces", variable=self.var_many_faces, command=self.update_video_config).pack(side="left", padx=10)
+
+        self.var_mouth_mask = ctk.BooleanVar(value=False)
+        ctk.CTkSwitch(toggles_frame, text="Mouth Mask", variable=self.var_mouth_mask, command=self.update_video_config).pack(side="left", padx=10)
         
         # Start/Stop
         self.btn_video_start = ctk.CTkButton(parent, text="Start Camera", command=self.toggle_video, height=40, font=("Roboto", 14, "bold"))
@@ -499,6 +502,7 @@ class UnifiedLauncher(ctk.CTk):
     def update_video_config(self):
         video_modules.globals.fp_ui["face_enhancer"] = self.var_enhancer.get()
         video_modules.globals.many_faces = self.var_many_faces.get()
+        video_modules.globals.mouth_mask = self.var_mouth_mask.get()
         # Re-init processors if running
         if self.video_running:
              self.frame_processors = get_frame_processors_modules(
@@ -619,6 +623,9 @@ class UnifiedLauncher(ctk.CTk):
         
         self.file_many_faces = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(opts_frame, text="Many Faces", variable=self.file_many_faces).pack(side="left", padx=10)
+
+        self.file_mouth_mask = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(opts_frame, text="Mouth Mask", variable=self.file_mouth_mask).pack(side="left", padx=10)
         
         self.file_keep_fps = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(opts_frame, text="Keep FPS", variable=self.file_keep_fps).pack(side="left", padx=10)
@@ -671,6 +678,7 @@ class UnifiedLauncher(ctk.CTk):
             
             # Set options from UI
             video_modules.globals.many_faces = self.file_many_faces.get()
+            video_modules.globals.mouth_mask = self.file_mouth_mask.get()
             video_modules.globals.keep_fps = self.file_keep_fps.get()
             video_modules.globals.keep_audio = self.file_keep_audio.get()
             video_modules.globals.fp_ui["face_enhancer"] = self.file_enhancer.get()
