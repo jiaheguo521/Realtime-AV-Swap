@@ -6,6 +6,7 @@ import threading
 import struct
 import shutil
 import json
+from collections import deque
 import customtkinter as ctk
 from tkinter import messagebox
 from PIL import Image, ImageOps
@@ -88,6 +89,10 @@ class UnifiedLauncher(ctk.CTk):
         self.fps_start_time = time.time()
         self.current_fps = 0.0
         
+        # Buffer for synchronization
+        self.frame_buffer = deque()
+        self.sync_offset = 0.0
+
         # Init Video Globals
         video_modules.globals.execution_providers = ['CUDAExecutionProvider']
         video_modules.globals.frame_processors = ['face_swapper']
@@ -464,6 +469,26 @@ class UnifiedLauncher(ctk.CTk):
         # Start/Stop
         self.btn_video_start = ctk.CTkButton(parent, text="Start Camera", command=self.toggle_video, height=40, font=("Roboto", 14, "bold"))
         self.btn_video_start.pack(pady=10, fill="x", padx=10)
+        
+        # Sync Offset Slider
+        self.create_video_slider(parent, "Sync Offset (ms)", -1000, 1000, 0, 10)
+
+    def create_video_slider(self, parent, label, min_val, max_val, default, step):
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", pady=2)
+        ctk.CTkLabel(frame, text=label).pack(side="left", padx=5)
+        lbl_val = ctk.CTkLabel(frame, text=str(default))
+        lbl_val.pack(side="right", padx=5)
+        
+        def update_val(val):
+            val = round(float(val), 2)
+            lbl_val.configure(text=str(val))
+            self.sync_offset = val
+
+        slider = ctk.CTkSlider(frame, from_=min_val, to=max_val, number_of_steps=int((max_val-min_val)/step), command=update_val)
+        slider.set(default)
+        slider.pack(side="right", fill="x", expand=True, padx=5)
+        self.sync_offset = default
 
     def get_cameras(self):
         try:
@@ -546,6 +571,7 @@ class UnifiedLauncher(ctk.CTk):
         
         try:
             ret, frame = self.video_cap.read()
+            capture_time = time.time()
             if ret:
                 if self.var_mirror.get():
                     frame = cv2.flip(frame, 1)
@@ -564,7 +590,9 @@ class UnifiedLauncher(ctk.CTk):
                 img_rgb = cv2.cvtColor(temp_frame, cv2.COLOR_BGR2RGB)
                 img_pil = Image.fromarray(img_rgb)
                 img_ctk = ctk.CTkImage(img_pil, size=(640, 480))
-                self.preview_label.configure(image=img_ctk)
+                
+                # Add to buffer
+                self.frame_buffer.append((capture_time, img_ctk))
                 
                 # Update FPS
                 self.fps_frame_count += 1
@@ -574,9 +602,44 @@ class UnifiedLauncher(ctk.CTk):
                     self.fps_start_time = time.time()
                     self.lbl_video_fps.configure(text=f"FPS: {self.current_fps:.1f}")
                 
-                # SHM Latency Update (Simulation)
+                # SHM Latency Update & Synchronization
                 if self.shm:
-                     pass
+                    try:
+                        # Write Video Delay
+                        process_time = time.time() - capture_time
+                        self.shm.buf[8:16] = struct.pack('d', process_time * 1000)
+                        
+                        # Write Sync Offset
+                        self.shm.buf[16:24] = struct.pack('d', float(self.sync_offset))
+                        
+                        # Read Audio Delay
+                        audio_delay_ms = struct.unpack('d', self.shm.buf[0:8])[0]
+                        
+                        # Calculate Target
+                        target_delay_ms = audio_delay_ms + self.sync_offset
+                        target_delay_s = max(0, target_delay_ms / 1000.0)
+                        
+                        # Find newest ready frame
+                        ready_frame = None
+                        while self.frame_buffer:
+                            ts, img = self.frame_buffer[0]
+                            age = time.time() - ts
+                            if age >= target_delay_s:
+                                ready_frame = img
+                                self.frame_buffer.popleft()
+                            else:
+                                break
+                        
+                        if ready_frame:
+                            self.preview_label.configure(image=ready_frame)
+                            
+                    except Exception as e:
+                        print(f"Sync Error: {e}")
+                        # Fallback
+                        self.preview_label.configure(image=img_ctk)
+                else:
+                    self.preview_label.configure(image=img_ctk)
+
             else:
                 print("Video Capture Read Error: No Frame")
         except Exception as e:
