@@ -32,8 +32,8 @@ A custom **Shared Memory** mechanism is used to synchronize audio and video late
 2.  **Download Sub-projects**:
     You must download the Audio and Video projects into their respective directories.
 
-    *   **Audio**: Clone [Seed-VC Realtime](https://github.com/jiaheguo521/seed-vc-realtime) into `audio/seed-vc-realtime`.
-    *   **Video**: Clone [Deep-Live-Cam](https://github.com/jiaheguo521/Deep-Live-Cam) into `video/Deep-Live-Cam`.
+    *   **Audio**: Clone [Seed-VC Realtime](https://github.com/jiaheguo521/seed-vc-realtime) into `audio`.
+    *   **Video**: Clone [Deep-Live-Cam](https://github.com/jiaheguo521/Deep-Live-Cam) into `video`.
 
     ```bash
     # Audio
